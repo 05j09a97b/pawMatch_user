@@ -21,7 +21,6 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 });
 
 // Test Supabase connection
-
 supabase
   .from('User')
   .select('*', { count: 'exact', head: true })
@@ -47,7 +46,7 @@ function authenticateToken(req, res, next) {
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) return res.sendStatus(403);
-    console.log('Decoded token:', user); // เพิ่ม logging
+    console.log('Decoded token:', user); 
     req.userId = user.userId;
     next();
   });
@@ -124,10 +123,10 @@ router.post('/register', async (req, res) => {
     const { 
       name, 
       surname, 
-      'displayName ': displayName, // สังเกตช่องว่างหลัง displayName
+      'displayName ': displayName, 
       email, 
       telephoneNumber, 
-      'lineId ': lineId, // สังเกตช่องว่างหลัง lineId
+      'lineId ': lineId, 
       password 
     } = req.body;
 
@@ -212,7 +211,6 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
 
-    // Create and assign token
     const token = jwt.sign({ userId: user.userId }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     console.log('User logged in successfully:', user.id);
@@ -386,4 +384,3 @@ router.delete('/profile', authenticateToken, async (req, res) => {
 module.exports = router;
 
 
-/// last update ตอนนี้ติดปัญหา delete user profile
