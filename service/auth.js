@@ -127,6 +127,10 @@ router.post('/register', async (req, res) => {
       email, 
       telephoneNumber, 
       'lineId ': lineId, 
+      'displayName ': displayName,
+      email, 
+      telephoneNumber, 
+      'lineId ': lineId,
       password 
     } = req.body;
 
@@ -382,5 +386,4 @@ router.delete('/profile', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
-
 
