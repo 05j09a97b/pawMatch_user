@@ -123,6 +123,10 @@ router.post('/register', async (req, res) => {
     const { 
       name, 
       surname, 
+      'displayName ': displayName, 
+      email, 
+      telephoneNumber, 
+      'lineId ': lineId, 
       'displayName ': displayName,
       email, 
       telephoneNumber, 
@@ -211,7 +215,6 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
 
-    // Create and assign token
     const token = jwt.sign({ userId: user.userId }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     console.log('User logged in successfully:', user.id);
