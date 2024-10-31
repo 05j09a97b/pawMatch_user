@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package auth;
+
+service AuthService {
+  rpc Register (RegisterRequest) returns (RegisterResponse) {}
+  rpc Login (LoginRequest) returns (LoginResponse) {}
+  rpc GetProfile (GetProfileRequest) returns (ProfileResponse) {}
+  rpc UpdateProfile (UpdateProfileRequest) returns (ProfileResponse) {}
+  rpc ChangePassword (ChangePasswordRequest) returns (ChangePasswordResponse) {}
+  rpc DeleteProfile (DeleteProfileRequest) returns (DeleteProfileResponse) {}
+  rpc Logout (LogoutRequest) returns (LogoutResponse) {}
+}
+
+message RegisterRequest {
+  string name = 1;
+  string surname = 2;
+  string displayName = 3;
+  string email = 4;
+  string telephoneNumber = 5;
+  string lineId = 6;
+  string password = 7;
+  bytes profileImage = 8;
+}
+
+message RegisterResponse {
+  string userId = 1;
+  string message = 2;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string token = 1;
+  string userId = 2;
+}
+
+message GetProfileRequest {
+  string userId = 1;
+}
+
+message ProfileResponse {
+  string userId = 1;
+  string name = 2;
+  string surname = 3;
+  string displayName = 4;
+  string email = 5;
+  string telephoneNumber = 6;
+  string lineId = 7;
+  string profileImage = 8;
+}
+
+message UpdateProfileRequest {
+  string userId = 1;
+  string name = 2;
+  string surname = 3;
+  string displayName = 4;
+  string telephoneNumber = 5;
+  string lineId = 6;
+  bytes profileImage = 7;
+}
+
+message ChangePasswordRequest {
+  string userId = 1;
+  string currentPassword = 2;
+  string newPassword = 3;
+}
+
+message ChangePasswordResponse {
+  string message = 1;
+}
+
+message DeleteProfileRequest {
+  string userId = 1;
+}
+
+message DeleteProfileResponse {
+  string message = 1;
+}
+
+message LogoutRequest {
+  string userId = 1;
+  string token = 2;
+}
+
+message LogoutResponse {
+  bool success = 1;
+  string message = 2;
+}
