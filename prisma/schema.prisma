@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
-  output   = "./generated/client1"
+  provider        = "prisma-client-js"
+  output          = "./generated/client1"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
@@ -10,15 +11,18 @@ datasource db {
 }
 
 model User {
-  userId          String   @id @default(uuid()) @map("id")
+  userId          String    @id @default(uuid())
+  email           String    @unique
+  password        String
   name            String
   surname         String
   displayName     String
-  email           String   @unique
   telephoneNumber String
   lineId          String?
-  password        String
-  profileImage    String?  // เพิ่มฟิลด์นี้
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  profileImage    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lastLogoutAt    DateTime?
+
+  @@map("user")
 }

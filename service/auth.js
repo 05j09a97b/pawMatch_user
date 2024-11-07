@@ -1,18 +1,12 @@
-const express = require('express');
-const { PrismaClient } = require('../prisma/generated/client1');
+const grpc = require('@grpc/grpc-js');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const router = express.Router();
-const prisma = new PrismaClient();
+const { PrismaClient } = require('../prisma/generated/client1');
 const { createClient } = require('@supabase/supabase-js');
-const fs = require('fs').promises;
-const path = require('path');
 const sharp = require('sharp');
 require('dotenv').config({ path: '../.env' });
 
-console.log('Supabase URL:', process.env.SUPABASE_URL);
-console.log('Supabase Anon Key (first 5 chars):', process.env.SUPABASE_ANON_KEY.substring(0, 5));
-
+const prisma = new PrismaClient();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
   auth: {
     autoRefreshToken: false,
@@ -20,370 +14,324 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
   }
 });
 
-// Test Supabase connection
-supabase
-  .from('User')
-  .select('*', { count: 'exact', head: true })
-  .then(response => {
-    console.log('Supabase connection test:', response);
-    console.log('Total users:', response.count);
-  })
-  .catch(error => {
-    console.error('Supabase connection error:', error);
-  });
-
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 const BUCKET_NAME = 'profile-image';
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
-console.log('Bucket Name:', BUCKET_NAME);
+const authService = {
+  Register: async (call, callback) => {
+    console.log('Registration request received');
+    try {
+      const { name, surname, displayName, email, telephoneNumber, lineId, password, profileImage } = call.request;
 
-// Middleware to authenticate token
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+      // Check if user exists
+      const existingUser = await prisma.user.findUnique({ where: { email } });
+      if (existingUser) {
+        return callback({
+          code: grpc.status.ALREADY_EXISTS,
+          details: 'User already exists'
+        });
+      }
 
-  if (token == null) return res.sendStatus(401);
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 10);
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
-    console.log('Decoded token:', user); 
-    req.userId = user.userId;
-    next();
-  });
-}
+      // Handle profile image if provided
+      let profileImageUrl = null;
+      if (profileImage && profileImage.length > 0) {
+        try {
+          const uploadFileName = `${Date.now()}_profile.jpg`;
+          const resizedImage = await sharp(profileImage)
+            .resize(800, 800, { fit: 'inside' })
+            .toBuffer();
 
-// Helper function for file upload
-async function uploadFile(file) {
-  if (!file) {
-    throw new Error('No file provided');
-  }
+          const { data, error } = await supabase.storage
+            .from(BUCKET_NAME)
+            .upload(uploadFileName, resizedImage, {
+              contentType: 'image/jpeg'
+            });
 
-  if (file.size > MAX_FILE_SIZE) {
-    throw new Error('File size exceeds the 50MB limit');
-  }
+          if (error) throw error;
 
-  try {
-    console.log('Reading file from temp path:', file.tempFilePath);
-    const fileBuffer = await fs.readFile(file.tempFilePath);
+          const { data: { publicUrl } } = supabase.storage
+            .from(BUCKET_NAME)
+            .getPublicUrl(uploadFileName);
 
-    console.log('Resizing image...');
-    let resizedImageBuffer = await sharp(fileBuffer)
-      .resize({ width: 800, height: 800, fit: 'inside' })
-      .toBuffer();
+          profileImageUrl = publicUrl;
+        } catch (error) {
+          console.error('Profile image upload error:', error);
+          return callback({
+            code: grpc.status.INTERNAL,
+            details: 'Error uploading profile image'
+          });
+        }
+      }
 
-    // Check size after resize
-    if (resizedImageBuffer.length > MAX_FILE_SIZE) {
-      console.log('Image still too large, reducing quality...');
-      resizedImageBuffer = await sharp(resizedImageBuffer)
-        .jpeg({ quality: 80 })
-        .toBuffer();
-    }
-
-    const fileName = `${Date.now()}_${file.name}`;
-
-    console.log('Uploading file to Supabase...');
-    const { data, error } = await supabase.storage
-      .from(BUCKET_NAME)
-      .upload(fileName, resizedImageBuffer, {
-        contentType: 'image/jpeg'
+      // Create user
+      const newUser = await prisma.user.create({
+        data: {
+          name,
+          surname,
+          displayName,
+          email,
+          telephoneNumber,
+          lineId,
+          password: hashedPassword,
+          profileImage: profileImageUrl
+        }
       });
 
-    if (error) {
-      console.error('Supabase upload error:', error);
-      throw error;
+      console.log('User registered successfully:', newUser.userId);
+      callback(null, {
+        userId: newUser.userId,
+        message: 'User registered successfully'
+      });
+    } catch (error) {
+      console.error('Registration error:', error);
+      callback({
+        code: grpc.status.INTERNAL,
+        details: 'Error registering user'
+      });
     }
+  },
 
-    console.log('File uploaded successfully:', data);
+  Login: async (call, callback) => {
+    console.log('Login request received');
+    try {
+      const { email, password } = call.request;
 
-    await fs.unlink(file.tempFilePath);
-
-    const { data: { publicUrl }, error: urlError } = supabase.storage
-      .from(BUCKET_NAME)
-      .getPublicUrl(fileName);
-
-    if (urlError) throw urlError;
-
-    return publicUrl;
-  } catch (error) {
-    console.error('File upload error:', error);
-    if (file.tempFilePath) {
-      await fs.unlink(file.tempFilePath).catch(console.error);
-    }
-    throw error;
-  }
-}
-
-// Register user
-router.post('/register', async (req, res) => {
-  console.log('Registration request received');
-  console.log('Request body:', req.body);
-  console.log('Request files:', req.files);
-
-  try {
-    const { 
-      name, 
-      surname, 
-      'displayName ': displayName, 
-      email, 
-      telephoneNumber, 
-      'lineId ': lineId, 
-      'displayName ': displayName,
-      email, 
-      telephoneNumber, 
-      'lineId ': lineId,
-      password 
-    } = req.body;
-
-    // Check if user already exists
-    const existingUser = await prisma.User.findUnique({ where: { email } });
-    if (existingUser) {
-      return res.status(400).json({ message: 'User already exists' });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    let profileImageUrl = null;
-
-    // Handle file upload if present
-    if (req.files && req.files.profileImage) {
-      try {
-        profileImageUrl = await uploadFile(req.files.profileImage);
-      } catch (uploadError) {
-        console.error('Profile image upload error:', uploadError);
-        return res.status(400).json({ message: uploadError.message });
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        return callback({
+          code: grpc.status.NOT_FOUND,
+          details: 'Invalid credentials'
+        });
       }
-    }
 
-    console.log('User data to be created:', {
-      name,
-      surname,
-      displayName,
-      email,
-      telephoneNumber,
-      lineId,
-      profileImage: profileImageUrl
-    });
-
-    // Create new user
-    const newUser = await prisma.User.create({
-      data: {
-        name,
-        surname,
-        displayName: displayName.trim(),
-        email,
-        telephoneNumber,
-        lineId: lineId || null,
-        password: hashedPassword,
-        profileImage: profileImageUrl
+      const validPassword = await bcrypt.compare(password, user.password);
+      if (!validPassword) {
+        return callback({
+          code: grpc.status.INVALID_ARGUMENT,
+          details: 'Invalid credentials'
+        });
       }
-    });
 
-    console.log('User registered successfully:', newUser.userId);
-    console.log('Received displayName:', displayName);
-    console.log('Trimmed displayName:', displayName.trim());
-if (!displayName || displayName.trim() === '') {
-  return res.status(400).json({ message: 'Display name is required' });
-}
-    res.status(201).json({ message: 'User registered successfully', userId: newUser.userId });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ 
-      message: 'Error registering user', 
-      error: error.message,
-      stack: error.stack 
-    });
-  }
-});
+      const token = jwt.sign(
+        { userId: user.userId },
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+      console.log(token);
 
-
-// Login user
-router.post('/login', async (req, res) => {
-  console.log('Login request received');
-  const { email, password } = req.body;
-
-  try {
-    // Find user by email
-    const user = await prisma.User.findUnique({ where: { email } });
-    if (!user) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+      callback(null, { token, userId: user.userId });
+    } catch (error) {
+      console.error('Login error:', error);
+      callback({
+        code: grpc.status.INTERNAL,
+        details: 'Error during login'
+      });
     }
+  },
 
-    // Check password
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      return res.status(400).json({ message: 'Invalid credentials' });
-    }
+  GetProfile: async (call, callback) => {
+    console.log('GetProfile request received');
+    try {
+      const { userId } = call.request;
 
-    const token = jwt.sign({ userId: user.userId }, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    console.log('User logged in successfully:', user.id);
-    res.json({ token, userId: user.id });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'Error logging in' });
-  }
-});
-
-
-// get user profile
-router.get('/profile', authenticateToken, async (req, res) => {
-  console.log('Profile fetch request received for user:', req.userId);
-  if (!req.userId) {
-    return res.status(401).json({ message: 'User ID not provided' });
-  }
-  try {
-    const user = await prisma.User.findUnique({
-      where: {
-        userId: req.userId
-      },
-      select: {
-        userId: true,
-        name: true,
-        surname: true,
-        displayName: true,
-        email: true,
-        telephoneNumber: true,
-        lineId: true,
-        profileImage: true
-      }
-    });
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    res.json(user);
-  } catch (error) {
-    console.error('Profile fetch error:', error);
-    res.status(500).json({ message: 'Error fetching user profile' });
-  }
-});
-
-
-// Update user profile
-router.put('/profile', authenticateToken, async (req, res) => {
-  console.log('Profile update request received for user:', req.userId);
-  
-  try {
-    const { name, surname, displayName, telephoneNumber, lineId } = req.body;
-    
-    console.log('Received update data:', { name, surname, displayName, telephoneNumber, lineId });
-
-    let profileImageUrl = null;
-
-    if (req.files && req.files.profileImage) {
-      try {
-        profileImageUrl = await uploadFile(req.files.profileImage);
-        console.log('New profile image uploaded:', profileImageUrl);
-        const currentUser = await prisma.User.findUnique({ where: { userId: req.userId } });
-        if (currentUser.profileImage) {
-          const oldFileName = currentUser.profileImage.split('/').pop();
-          await supabase.storage.from(BUCKET_NAME).remove([oldFileName]);
-          console.log('Old profile image deleted');
+      const user = await prisma.user.findUnique({
+        where: { userId },
+        select: {
+          userId: true,
+          name: true,
+          surname: true,
+          displayName: true,
+          email: true,
+          telephoneNumber: true,
+          lineId: true,
+          profileImage: true
         }
-      } catch (uploadError) {
-        console.error('Profile image upload error:', uploadError);
-        return res.status(400).json({ message: uploadError.message });
+      });
+
+      if (!user) {
+        return callback({
+          code: grpc.status.NOT_FOUND,
+          details: 'User not found'
+        });
       }
+
+      callback(null, user);
+    } catch (error) {
+      console.error('GetProfile error:', error);
+      callback({
+        code: grpc.status.INTERNAL,
+        details: 'Error fetching profile'
+      });
     }
+  },
 
-    const updateData = {
-      ...(name && { name }),
-      ...(surname && { surname }),
-      ...(displayName && { displayName }),
-      ...(telephoneNumber && { telephoneNumber }),
-      ...(lineId && { lineId }),
-      ...(profileImageUrl && { profileImage: profileImageUrl })
-    };
+  UpdateProfile: async (call, callback) => {
+    console.log('UpdateProfile request received');
+    try {
+      const { userId, name, surname, displayName, telephoneNumber, lineId, profileImage } = call.request;
 
-    console.log('Update data:', updateData);
+      let profileImageUrl = null;
+      if (profileImage && profileImage.length > 0) {
+        try {
+          const uploadFileName = `${Date.now()}_profile.jpg`;
+          const resizedImage = await sharp(profileImage)
+            .resize(800, 800, { fit: 'inside' })
+            .toBuffer();
 
-    // Update user profile
-    const updatedUser = await prisma.User.update({
-      where: { userId: req.userId },
-      data: updateData,
-      select: {
-        userId: true,
-        name: true,
-        surname: true,
-        displayName: true,
-        email: true,
-        telephoneNumber: true,
-        lineId: true,
-        profileImage: true
+          // Delete old image if exists
+          const currentUser = await prisma.user.findUnique({ where: { userId } });
+          if (currentUser.profileImage) {
+            const oldFileName = currentUser.profileImage.split('/').pop();
+            await supabase.storage.from(BUCKET_NAME).remove([oldFileName]);
+          }
+
+          const { data, error } = await supabase.storage
+            .from(BUCKET_NAME)
+            .upload(uploadFileName, resizedImage, {
+              contentType: 'image/jpeg'
+            });
+
+          if (error) throw error;
+
+          const { data: { publicUrl } } = supabase.storage
+            .from(BUCKET_NAME)
+            .getPublicUrl(uploadFileName);
+
+          profileImageUrl = publicUrl;
+        } catch (error) {
+          console.error('Profile image upload error:', error);
+          return callback({
+            code: grpc.status.INTERNAL,
+            details: 'Error uploading profile image'
+          });
+        }
       }
-    });
 
-    console.log('User profile updated successfully:', updatedUser);
-    res.json({ message: 'Profile updated successfully', user: updatedUser });
-  } catch (error) {
-    console.error('Profile update error:', error);
-    res.status(500).json({ message: 'Error updating user profile', error: error.message });
-  }
-});
+      const updateData = {
+        ...(name && { name }),
+        ...(surname && { surname }),
+        ...(displayName && { displayName }),
+        ...(telephoneNumber && { telephoneNumber }),
+        ...(lineId && { lineId }),
+        ...(profileImageUrl && { profileImage: profileImageUrl })
+      };
 
-// Change password
-router.put('/change-password', authenticateToken, async (req, res) => {
-  console.log('Password change request received for user:', req.userId);
-  const { currentPassword, newPassword } = req.body;
+      const updatedUser = await prisma.user.update({
+        where: { userId },
+        data: updateData,
+        select: {
+          userId: true,
+          name: true,
+          surname: true,
+          displayName: true,
+          email: true,
+          telephoneNumber: true,
+          lineId: true,
+          profileImage: true
+        }
+      });
 
-  try {
-    const user = await prisma.User.findUnique({ where: { id: req.userId } });
-
-    const validPassword = await bcrypt.compare(currentPassword, user.password);
-    if (!validPassword) {
-      return res.status(400).json({ message: 'Current password is incorrect' });
+      callback(null, updatedUser);
+    } catch (error) {
+      console.error('UpdateProfile error:', error);
+      callback({
+        code: grpc.status.INTERNAL,
+        details: 'Error updating profile'
+      });
     }
+  },
 
-    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+  ChangePassword: async (call, callback) => {
+    console.log('ChangePassword request received');
+    try {
+      const { userId, currentPassword, newPassword } = call.request;
 
-    await prisma.User.update({
-      where: { id: req.userId },
-      data: { password: hashedNewPassword }
-    });
-
-    console.log('Password changed successfully for user:', req.userId);
-    res.json({ message: 'Password changed successfully' });
-  } catch (error) {
-    console.error('Password change error:', error);
-    res.status(500).json({ message: 'Error changing password' });
-  }
-});
-
-// Delete User Profile
-router.delete('/profile', authenticateToken, async (req, res) => {
-  console.log('Profile deletion request received for user:', req.userId);
-  try {
-    const user = await prisma.User.findUnique({
-      where: {
-        userId: req.userId
+      const user = await prisma.user.findUnique({ where: { userId } });
+      if (!user) {
+        return callback({
+          code: grpc.status.NOT_FOUND,
+          details: 'User not found'
+        });
       }
-    });
 
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      const validPassword = await bcrypt.compare(currentPassword, user.password);
+      if (!validPassword) {
+        return callback({
+          code: grpc.status.INVALID_ARGUMENT,
+          details: 'Current password is incorrect'
+        });
+      }
+
+      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+      await prisma.user.update({
+        where: { userId },
+        data: { password: hashedNewPassword }
+      });
+
+      callback(null, { message: 'Password changed successfully' });
+    } catch (error) {
+      console.error('ChangePassword error:', error);
+      callback({
+        code: grpc.status.INTERNAL,
+        details: 'Error changing password'
+      });
     }
+  },
 
-    // Delete profile image from Supabase storage if it exists
-    if (user.profileImage) {
-      const fileName = user.profileImage.split('/').pop();
-      await supabase.storage.from(BUCKET_NAME).remove([fileName]);
-      console.log('Profile image deleted from storage');
+  DeleteProfile: async (call, callback) => {
+    console.log('DeleteProfile request received');
+    try {
+      const { userId } = call.request;
+
+      const user = await prisma.user.findUnique({ where: { userId } });
+      if (!user) {
+        return callback({
+          code: grpc.status.NOT_FOUND,
+          details: 'User not found'
+        });
+      }
+
+      if (user.profileImage) {
+        const fileName = user.profileImage.split('/').pop();
+        await supabase.storage.from(BUCKET_NAME).remove([fileName]);
+      }
+
+      await prisma.user.delete({ where: { userId } });
+      callback(null, { message: 'Profile deleted successfully' });
+    } catch (error) {
+      console.error('DeleteProfile error:', error);
+      callback({
+        code: grpc.status.INTERNAL,
+        details: 'Error deleting profile'
+      });
     }
+  },
 
-    // Delete user from database
-    await prisma.User.delete({
-      where: { userId: req.userId }
-    });
+  Logout: async (call, callback) => {
+    console.log('Logout request received');
+    try {
+      const { userId, token } = call.request;
 
-    console.log('User profile deleted successfully:', req.userId);
-    res.json({ message: 'User deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting profile:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+      await prisma.user.update({
+        where: { userId },
+        data: { lastLogoutAt: new Date() }
+      });
+
+      callback(null, { 
+        success: true,
+        message: 'Logged out successfully'
+      });
+    } catch (error) {
+      console.error('Logout error:', error);
+      callback({
+        code: grpc.status.INTERNAL,
+        details: 'Error during logout'
+      });
+    }
   }
-});
+};
 
-module.exports = router;
-
+module.exports = authService;
