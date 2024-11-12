@@ -42,7 +42,7 @@ server.addService(proto.auth.AuthService.service, {
 });
 
 // Start server
-const host = '127.0.0.1';
+const host = '0.0.0.0';
 const port = process.env.PORT || 50051;
 
 server.bindAsync(`${host}:${port}`, grpc.ServerCredentials.createInsecure(), async (err, port) => {

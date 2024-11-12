@@ -5,7 +5,8 @@
   "scripts": {
     "test": "nodemon '/Users/iceheat/CU/1:2567/SW ARCH/software/serviceUser/service/index.js' ",
     "server": "nodemon server.js",
-    "user": "npx prisma studio --schema prisma/schema.prisma "
+    "user": "npx prisma studio --schema prisma/schema.prisma ",
+    "start": "node server.js"
   },
   "author": "",
   "license": "ISC",

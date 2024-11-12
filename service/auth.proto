@@ -3,10 +3,29 @@ syntax = "proto3";
 package auth;
 
 service AuthService {
-  rpc Register (RegisterRequest) returns (RegisterResponse) {}
-  rpc Login (LoginRequest) returns (LoginResponse) {}
-  rpc GetProfile (GetProfileRequest) returns (ProfileResponse) {}
-  rpc UpdateProfile (UpdateProfileRequest) returns (ProfileResponse) {}
+  rpc Register (RegisterRequest) returns (RegisterResponse) {
+    option (google.api.http) = {
+      post: "/user/register"
+      body: "*"
+    };
+  }
+  rpc Login (LoginRequest) returns (LoginResponse) {
+    option (google.api.http) = {
+      post: "/user/login"
+      body: "*"
+    };
+  }
+  rpc GetProfile (GetProfileRequest) returns (ProfileResponse) {
+    option (google.api.http) = {
+      get: "/user/{userId}"
+    };
+  }
+  rpc UpdateProfile (UpdateProfileRequest) returns (ProfileResponse) {
+    option (google.api.http) = {
+      put: "/user/update"
+      body: "*"
+    };
+  }
   rpc ChangePassword (ChangePasswordRequest) returns (ChangePasswordResponse) {}
   rpc DeleteProfile (DeleteProfileRequest) returns (DeleteProfileResponse) {}
   rpc Logout (LogoutRequest) returns (LogoutResponse) {}
